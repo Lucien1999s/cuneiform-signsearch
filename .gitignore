@@ -1,7 +1,6 @@
 __pycache__/
 *.py[cod]
 *.pyo
-*.pyd
 *.egg-info/
 .eggs/
 .venv/
@@ -11,3 +10,6 @@ ENV/
 .DS_Store
 .idea/
 .vscode/
+
+data/
+models/
