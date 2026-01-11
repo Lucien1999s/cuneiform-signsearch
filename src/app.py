@@ -1,161 +1,204 @@
 from __future__ import annotations
 
-import sys
+import base64
 from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-import json
-from datetime import datetime, timezone
 from typing import Any
 
 import gradio as gr
-from PIL import Image
 
-from src.embedding import Embedder, EmbedderConfig
-from src.preprocess import PreprocessConfig
-from src.search import SearchConfig, default_embedder, search_signs
+from src.text_search import search
 
 
-DATA_DIR = Path("data")
-FEEDBACK_DIR = DATA_DIR / "feedback"
+ASSETS_ROOT = Path("datasets")
 
 
-def _format_results(results: list[dict]) -> tuple[list[tuple[Image.Image, str]], list[list[Any]]]:
-    gallery_items: list[tuple[Image.Image, str]] = []
-    table_rows: list[list[Any]] = []
+def _image_to_data_uri(path: str) -> str:
+    file_path = Path(path)
+    if not file_path.exists():
+        return ""
+    data = file_path.read_bytes()
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
 
-    for rank, result in enumerate(results, start=1):
-        path = result.get("image_path")
-        image = Image.open(path) if path else None
-        caption = f"{result.get('sign_id')} | {result.get('english')}"
-        if image is not None:
-            gallery_items.append((image, caption))
-        table_rows.append(
-            [
-                rank,
-                result.get("sign_id"),
-                result.get("english"),
-                f"{result.get('score'):.4f}",
-                path,
-            ]
+
+def _render_cards(results: list[dict[str, Any]]) -> str:
+    if not results:
+        return "<div class='empty'>No results yet.</div>"
+
+    cards = []
+    for item in results:
+        score = item.get("score")
+        score_str = f"{score:.4f}" if isinstance(score, (int, float)) else "n/a"
+        icon_path = item.get("icon_path") or ""
+        img_src = _image_to_data_uri(icon_path)
+        text = item.get("text") or ""
+        cards.append(
+            f"""
+            <div class="card">
+              <div class="thumb">
+                <img src="{img_src}" alt="cuneiform tablet"/>
+              </div>
+              <div class="meta">
+                <div class="text">{text}</div>
+                <div class="score">Score: {score_str}</div>
+              </div>
+            </div>
+            """
         )
+    return "<div class='grid'>" + "".join(cards) + "</div>"
 
-    return gallery_items, table_rows
 
+def _run_search(query: str, top_k: int) -> str:
+    query = (query or "").strip()
+    if not query:
+        return "<div class='empty'>Enter a query to search.</div>"
 
-def _run_search(
-    image: Image.Image | None,
-    top_k: int,
-    model_name: str,
-    device: str,
-    weights_path: str,
-) -> tuple[list, list, list[dict]]:
-    if image is None:
-        return [], [], []
-
-    weights = weights_path.strip() or None
-    embedder = Embedder(
-        EmbedderConfig(model_name=model_name, device=device, weights_path=weights)
+    results = search(
+        query=query,
+        output_dir=Path("data"),
+        collection_name="tablets",
+        top_k=top_k,
+        model_name="BAAI/bge-large-en-v1.5",
     )
-    results = search_signs(
-        image,
-        embedder,
-        PreprocessConfig(),
-        SearchConfig(top_k=top_k, data_dir=DATA_DIR),
-    )
-    gallery_items, table_rows = _format_results(results)
-    return gallery_items, table_rows, results
-
-
-def _select_gallery(evt: gr.SelectData, results: list[dict]) -> int:
-    if results and evt.index is not None:
-        return int(evt.index)
-    return -1
-
-
-def _save_feedback(
-    image: Image.Image | None,
-    results: list[dict],
-    selected_index: int,
-) -> str:
-    if image is None or not results or selected_index < 0:
-        return "No selection saved."
-
-    FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    crop_path = FEEDBACK_DIR / f"crop_{timestamp}.jpg"
-    image.save(crop_path)
-
-    record = {
-        "timestamp": timestamp,
-        "crop_path": str(crop_path),
-        "selected": results[selected_index],
-        "candidates": results,
-    }
-    with (FEEDBACK_DIR / "feedback.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-    return f"Saved selection: {results[selected_index].get('sign_id')}"
+    return _render_cards(results)
 
 
 def build_app() -> gr.Blocks:
-    with gr.Blocks(title="Cuneiform Sign Visual Lookup") as demo:
-        gr.Markdown("# Cuneiform Sign Visual Lookup (MVP)")
+    with gr.Blocks(title="Cuneiform Tablet Semantic Search") as demo:
+        gr.HTML(
+            """
+            <div class="hero">
+              <div class="title">Cuneiform Tablet Semantic Search</div>
+              <div class="subtitle">
+                Enter English words to retrieve semantically related cuneiform tablets.
+              </div>
+            </div>
+            """
+        )
 
         with gr.Row():
-            with gr.Column():
-                image_input = gr.Image(
-                    label="Upload and crop a sign",
-                    tool="crop",
-                    type="pil",
+            with gr.Column(scale=5):
+                query = gr.Textbox(
+                    label="English Query",
+                    placeholder="Try: barley trade, temple offerings, land purchase, messenger, tax record",
                 )
+            with gr.Column(scale=1, min_width=160):
                 top_k = gr.Slider(1, 20, value=5, step=1, label="Top-K")
-                model_name = gr.Textbox(
-                    label="Model name",
-                    value=EmbedderConfig().model_name,
-                )
-                device = gr.Dropdown(
-                    ["cpu", "cuda"],
-                    value="cpu",
-                    label="Device",
-                )
-                weights_path = gr.Textbox(
-                    label="Local weights path (optional)",
-                    value="",
-                )
-                search_btn = gr.Button("Search")
-                save_btn = gr.Button("Save Selection")
-                status = gr.Markdown("")
+                run = gr.Button("Search", variant="primary")
 
-            with gr.Column():
-                gallery = gr.Gallery(label="Candidates", columns=3, height=360)
-                table = gr.Dataframe(
-                    headers=["rank", "sign_id", "english", "score", "image_path"],
-                    interactive=False,
-                )
+        results = gr.HTML()
 
-        results_state = gr.State([])
-        selected_state = gr.State(-1)
+        run.click(_run_search, inputs=[query, top_k], outputs=[results])
 
-        search_btn.click(
-            _run_search,
-            inputs=[image_input, top_k, model_name, device, weights_path],
-            outputs=[gallery, table, results_state],
-        )
-        gallery.select(
-            _select_gallery,
-            inputs=[results_state],
-            outputs=[selected_state],
-        )
-        save_btn.click(
-            _save_feedback,
-            inputs=[image_input, results_state, selected_state],
-            outputs=[status],
+        gr.HTML(
+            """
+            <div class="footer">
+              Index source: translated cuneiform sign glossary. Model: BAAI/bge-large-en-v1.5.
+            </div>
+            """
         )
 
+    demo.css = """
+    :root {
+      --paper: #f7f3ec;
+      --ink: #1f1f1a;
+      --accent: #c9772b;
+      --accent-dark: #8f541f;
+      --card: #ffffff;
+      --muted: #5f5a4f;
+    }
+    body, .gradio-container {
+      background: radial-gradient(1200px 600px at 5% 0%, #fff8ec 0%, #f2eadf 40%, #efe5d7 100%);
+      color: var(--ink);
+      font-family: "Baskerville", "Georgia", "Times New Roman", serif;
+    }
+    .hero {
+      padding: 22px 0 12px 0;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+      margin-bottom: 10px;
+      animation: fadeUp 420ms ease-out;
+    }
+    .title {
+      font-size: 44px;
+      font-weight: 800;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+    .subtitle {
+      color: var(--muted);
+      margin-top: 8px;
+      font-size: 16px;
+      max-width: 760px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 18px;
+    }
+    .card {
+      border: 1px solid rgba(0,0,0,0.08);
+      border-radius: 16px;
+      overflow: hidden;
+      background: var(--card);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.08);
+      transform: translateY(0);
+      transition: transform 200ms ease, box-shadow 200ms ease;
+      animation: fadeUp 500ms ease-out;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 16px 28px rgba(0,0,0,0.12);
+    }
+    .thumb {
+      height: 190px;
+      background: repeating-linear-gradient(
+        135deg,
+        #f7efe4 0px,
+        #f7efe4 10px,
+        #f3e7d8 10px,
+        #f3e7d8 20px
+      );
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .thumb img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.15));
+    }
+    .meta {
+      padding: 14px 16px 16px 16px;
+    }
+    .text {
+      font-size: 15px;
+      line-height: 1.45;
+      min-height: 46px;
+      font-weight: 700;
+    }
+    .score {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--accent-dark);
+      font-weight: 800;
+      letter-spacing: 0.4px;
+    }
+    .footer {
+      margin-top: 20px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 14px;
+      padding: 6px 0;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    """
     return demo
 
 

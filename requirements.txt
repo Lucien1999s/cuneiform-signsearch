@@ -1,7 +1,5 @@
-faiss-cpu
-gradio
 numpy
-pillow
-timm
+pymilvus[milvus_lite]
+sentence-transformers
 torch
-torchvision
+gradio
