@@ -11,7 +11,7 @@ pip install -r requirements.txt
 
 2) Build the text index (runs once per model)
 ```
-python3 src/text_index.py --output data --collection tablets --model BAAI/bge-large-en-v1.5
+python3 src/text_index.py --output data --collection tablets --model intfloat/e5-base-v2
 ```
 
 ## Run the Demo UI
@@ -23,7 +23,7 @@ python3 main.py
 ## Query from CLI
 
 ```
-python3 src/text_search.py "trade of barley with merchant" --output data --collection tablets --top-k 5 --model BAAI/bge-large-en-v1.5
+python3 src/text_search.py "trade of barley with merchant" --output data --collection tablets --top-k 5 --model intfloat/e5-base-v2
 ```
 
 ## Notes

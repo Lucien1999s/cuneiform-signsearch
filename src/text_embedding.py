@@ -10,7 +10,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class TextEmbedConfig:
-    model_name: str = "BAAI/bge-large-en-v1.5"
+    model_name: str = "intfloat/e5-base-v2"
     model_dir: Path = Path("models") / "hf"
 
 

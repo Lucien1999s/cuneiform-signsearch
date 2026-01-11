@@ -58,7 +58,7 @@ def _run_search(query: str, top_k: int) -> str:
         output_dir=Path("data"),
         collection_name="tablets",
         top_k=top_k,
-        model_name="BAAI/bge-large-en-v1.5",
+        model_name="intfloat/e5-base-v2",
     )
     return _render_cards(results)
 
@@ -93,7 +93,7 @@ def build_app() -> gr.Blocks:
         gr.HTML(
             """
             <div class="footer">
-              Index source: translated cuneiform sign glossary. Model: BAAI/bge-large-en-v1.5.
+              Index source: translated cuneiform sign glossary. Model: intfloat/e5-base-v2.
             </div>
             """
         )
